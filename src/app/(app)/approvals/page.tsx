@@ -1,13 +1,15 @@
 import Link from 'next/link'
 import { requireApprover } from '@/lib/auth'
 import { Avatar, Badge, Empty, Flash, PageHead, one, type SP } from '@/components/ui'
-import { addDays, entryMinutes, fmtDate, fmtDateTime, fmtMinutes, fmtRange, hhmm, n1 } from '@/lib/dates'
-import { LEAVE_LABEL, type LeaveRequest, type TimeEntry } from '@/lib/types'
+import { entryMinutes, fmtDateLong, fmtDateTime, fmtMinutes, fmtRange, fmtTime, hhmm, n1 } from '@/lib/dates'
+import { LEAVE_LABEL, type DailyTimesheet, type LeaveRequest, type TimeEntry } from '@/lib/types'
 import { decideLeave, decideTimesheet } from './actions'
 
 export const metadata = { title: 'Approvals' }
+export const dynamic = 'force-dynamic'
 
 type Req = LeaveRequest & { employee: { full_name: string; position: string | null } | null }
+type Sheet = DailyTimesheet & { employee: { full_name: string; position: string | null } | null }
 type Ent = TimeEntry & { project: { code: string; name: string } | null; employee: { full_name: string; position: string | null } | null }
 
 function DecisionButtons({ label }: { label: string }) {
@@ -22,42 +24,45 @@ function DecisionButtons({ label }: { label: string }) {
 }
 
 export default async function ApprovalsPage({ searchParams }: { searchParams: SP }) {
-  const { supabase, profile, org } = await requireApprover()
+  const { supabase, profile, org, reportIds } = await requireApprover()
   const sp = await searchParams
   const tab = one(sp.tab) === 'timesheets' ? 'timesheets' : 'leave'
 
-  const [leaveRes, entRes] = await Promise.all([
-    supabase.from('leave_requests').select('*, employee:profiles!user_id(full_name,position)').eq('status', 'pending').neq('user_id', profile.id).order('start_date'),
-    supabase.from('time_entries').select('*, project:projects(code,name), employee:profiles!user_id(full_name,position)').eq('status', 'submitted').neq('user_id', profile.id).order('work_date').order('start_time'),
+  const [leaveRes, sheetRes, entRes] = await Promise.all([
+    // Leave: ONLY requests from people who report directly to me. HR is not a leave approver.
+    reportIds.length
+      ? supabase.from('leave_requests').select('*, employee:profiles!user_id(full_name,position)').eq('status', 'pending').in('user_id', reportIds).order('start_date')
+      : Promise.resolve({ data: [] }),
+    // Timesheets: unchanged routing (line manager, HR for anyone) — one card per person-day.
+    supabase.from('daily_timesheets').select('*, employee:profiles!user_id(full_name,position)').eq('status', 'submitted').neq('user_id', profile.id).order('work_date').order('submitted_at'),
+    supabase.from('time_entries').select('*, project:projects(code,name)').eq('status', 'submitted').neq('user_id', profile.id).order('start_time'),
   ])
   const leave = (leaveRes.data ?? []) as Req[]
+  const sheets = (sheetRes.data ?? []) as Sheet[]
   const entries = (entRes.data ?? []) as Ent[]
-
-  // group submitted entries into person-weeks
-  const groups = new Map<string, { user: string; week: string; name: string; position: string | null; list: Ent[] }>()
-  for (const e of entries) {
-    const key = `${e.user_id}|${e.week_start}`
-    if (!groups.has(key)) groups.set(key, { user: e.user_id, week: e.week_start, name: e.employee?.full_name ?? 'Unknown', position: e.employee?.position ?? null, list: [] })
-    groups.get(key)!.list.push(e)
-  }
-  const weeks = [...groups.values()]
+  const entriesOf = (s: Sheet) => entries.filter((e) => e.user_id === s.user_id && e.work_date === s.work_date)
+  const now = Date.now()
 
   return (
     <>
       <PageHead
         title="Approvals"
-        sub={profile.role === 'hr' ? 'As HR you can decide any pending request, for example when a manager is away.' : 'Requests from the people who report to you.'}
+        sub={
+          profile.role === 'hr'
+            ? 'Leave requests are approved only by each employee’s line manager. As HR you can review any submitted timesheet.'
+            : 'Requests from the people who report to you.'
+        }
       />
       <Flash ok={one(sp.ok)} error={one(sp.error)} />
 
       <div className="tabs">
         <Link href="/approvals" className={tab === 'leave' ? 'on' : ''}>Leave requests<span className="c">{leave.length}</span></Link>
-        <Link href="/approvals?tab=timesheets" className={tab === 'timesheets' ? 'on' : ''}>Timesheets<span className="c">{weeks.length}</span></Link>
+        <Link href="/approvals?tab=timesheets" className={tab === 'timesheets' ? 'on' : ''}>Timesheets<span className="c">{sheets.length}</span></Link>
       </div>
 
       {tab === 'leave' &&
         (leave.length === 0 ? (
-          <div className="card"><Empty title="Nothing to approve">New leave requests will appear here.</Empty></div>
+          <div className="card"><Empty title="Nothing to approve">Leave requests from people who report to you will appear here.</Empty></div>
         ) : (
           leave.map((r) => (
             <div className="card" key={r.id} style={{ marginBottom: 14 }}>
@@ -91,33 +96,44 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
         ))}
 
       {tab === 'timesheets' &&
-        (weeks.length === 0 ? (
-          <div className="card"><Empty title="No timesheets waiting">Submitted weeks will appear here.</Empty></div>
+        (sheets.length === 0 ? (
+          <div className="card"><Empty title="No timesheets waiting">Submitted daily timesheets will appear here.</Empty></div>
         ) : (
-          weeks.map((g) => {
-            const total = g.list.reduce((s, e) => s + entryMinutes(e), 0)
+          sheets.map((g) => {
+            const list = entriesOf(g)
+            const total = list.reduce((s, e) => s + entryMinutes(e), 0)
+            const key = `${g.user_id}-${g.work_date}`
+            const stillEditable = !!g.edit_until && new Date(g.edit_until).getTime() > now
             return (
-              <div className="card" key={`${g.user}|${g.week}`} style={{ marginBottom: 14 }}>
+              <div className="card" key={key} style={{ marginBottom: 14 }}>
                 <div className="row between">
                   <div className="row">
-                    <Avatar name={g.name} />
+                    <Avatar name={g.employee?.full_name ?? '?'} />
                     <div>
-                      <b>{g.name}</b>
-                      <div className="muted sm">Week of {fmtRange(g.week, addDays(g.week, 6))}</div>
+                      <b>{g.employee?.full_name ?? 'Unknown'}</b>
+                      <div className="muted sm">{fmtDateLong(g.work_date)}</div>
                     </div>
                   </div>
-                  <div className="row"><b>{fmtMinutes(total)}</b><Badge label="Submitted" tone="amber" /></div>
+                  <div className="row">
+                    <b>{fmtMinutes(total)}</b>
+                    <Badge label={g.resubmissions > 0 ? 'Resubmitted' : 'Submitted'} tone="amber" />
+                  </div>
                 </div>
-                <details style={{ margin: '12px 0' }}>
-                  <summary className="sm" style={{ cursor: 'pointer' }}>View {g.list.length} entries</summary>
+                <div className="muted sm" style={{ marginTop: 8 }}>
+                  Submitted {g.submitted_at ? fmtDateTime(g.submitted_at, org.timezone) : '—'}
+                  {g.resubmissions > 0 && g.last_submitted_at ? ` · resubmitted ${fmtDateTime(g.last_submitted_at, org.timezone)}` : ''}
+                  {stillEditable && g.edit_until ? ` · the employee can still edit until ${fmtTime(g.edit_until, org.timezone)} (your decision ends that)` : ''}
+                </div>
+                <details style={{ margin: '12px 0' }} open>
+                  <summary className="sm" style={{ cursor: 'pointer' }}>{list.length} entr{list.length === 1 ? 'y' : 'ies'}</summary>
                   <div className="tw">
                     <table>
                       <tbody>
-                        {g.list.map((e) => (
+                        {list.map((e) => (
                           <tr key={e.id}>
-                            <td className="nowrap">{fmtDate(e.work_date)}</td>
                             <td className="nowrap">{hhmm(e.start_time)}–{hhmm(e.end_time)}</td>
                             <td><b>{e.project?.code}</b> {e.task}<div className="muted sm">{e.description}</div></td>
+                            <td className="num nowrap">{e.break_min} min break</td>
                             <td className="num">{fmtMinutes(entryMinutes(e))}</td>
                           </tr>
                         ))}
@@ -126,11 +142,11 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
                   </div>
                 </details>
                 <form action={decideTimesheet}>
-                  <input type="hidden" name="user" value={g.user} />
-                  <input type="hidden" name="week" value={g.week} />
+                  <input type="hidden" name="user" value={g.user_id} />
+                  <input type="hidden" name="date" value={g.work_date} />
                   <div className="fld">
-                    <label htmlFor={`t-${g.user}-${g.week}`}>Note to the employee</label>
-                    <input id={`t-${g.user}-${g.week}`} name="note" className="note-input" maxLength={500} placeholder="Required when rejecting or requesting changes" />
+                    <label htmlFor={`t-${key}`}>Note to the employee</label>
+                    <input id={`t-${key}`} name="note" className="note-input" maxLength={500} placeholder="Required when rejecting or requesting changes" />
                   </div>
                   <DecisionButtons label="Approving adds these hours to the project totals." />
                 </form>

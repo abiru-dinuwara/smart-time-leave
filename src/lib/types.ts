@@ -53,6 +53,28 @@ export interface TimeEntry {
   submitted_at: string | null
 }
 
+/** One daily submission per employee per date (table daily_timesheets, migration 0003). */
+export interface DailyTimesheet {
+  id: string
+  user_id: string
+  work_date: string
+  status: EntryStatus
+  /** First submission time, assigned by the database. Never changes. */
+  submitted_at: string | null
+  /** Latest (re)submission time. */
+  last_submitted_at: string | null
+  /** End of the employee's editing window (last_submitted_at + 30 minutes). */
+  edit_until: string | null
+  resubmissions: number
+  reviewed_by: string | null
+  reviewed_at: string | null
+  review_note: string | null
+  created_at: string
+}
+
+/** Must match the interval in submit_timesheet_day() (migration 0003). */
+export const TIMESHEET_EDIT_WINDOW_MIN = 30
+
 export interface LeaveRequest {
   id: string
   user_id: string

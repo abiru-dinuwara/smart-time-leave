@@ -8,6 +8,7 @@ import { isIsoDate } from '@/lib/dates'
 const text = (f: FormData, k: string) => String(f.get(k) ?? '').trim()
 const DECISIONS = ['approved', 'rejected', 'changes']
 
+/** Only the employee's line manager may decide leave; the database rejects anyone else (incl. HR). */
 export async function decideLeave(formData: FormData) {
   const { supabase } = await requireApprover()
   const decision = text(formData, 'decision')
@@ -18,15 +19,16 @@ export async function decideLeave(formData: FormData) {
   back('/approvals', 'ok', 'Decision saved. The employee has been notified.')
 }
 
+/** Review one employee's daily timesheet (line manager, or HR — unchanged for timesheets). */
 export async function decideTimesheet(formData: FormData) {
   const { supabase } = await requireApprover()
   const decision = text(formData, 'decision')
-  const week = text(formData, 'week')
+  const date = text(formData, 'date')
   const path = '/approvals?tab=timesheets'
-  if (!DECISIONS.includes(decision) || !isIsoDate(week)) back(path, 'error', 'Invalid request.')
-  const { error } = await supabase.rpc('decide_timesheet_week', {
+  if (!DECISIONS.includes(decision) || !isIsoDate(date)) back(path, 'error', 'Invalid request.')
+  const { error } = await supabase.rpc('decide_timesheet_day', {
     p_user: text(formData, 'user'),
-    p_week: week,
+    p_date: date,
     p_decision: decision,
     p_note: text(formData, 'note'),
   })

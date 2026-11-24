@@ -4,26 +4,26 @@ import { ROLE_LABEL } from '@/lib/types'
 import AppShell from '@/components/AppShell'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const { supabase, profile, org, reports, isApprover } = await requireContext()
+  const { supabase, profile, org, reports, reportIds, isApprover } = await requireContext()
 
   const role = profile.role
   const showApprovals = isApprover
 
-  const [notif, leave, weeks] = await Promise.all([
+  const [notif, leave, days] = await Promise.all([
     supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('read', false),
-    showApprovals
-      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').neq('user_id', profile.id)
+    // leave is approved only by the line manager -> count my direct reports' pending requests
+    showApprovals && reportIds.length
+      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').in('user_id', reportIds)
       : Promise.resolve({ count: 0 }),
     showApprovals
-      ? supabase.from('time_entries').select('user_id, week_start').eq('status', 'submitted').neq('user_id', profile.id)
-      : Promise.resolve({ data: [] as { user_id: string; week_start: string }[] }),
+      ? supabase.from('daily_timesheets').select('id', { count: 'exact', head: true }).eq('status', 'submitted').neq('user_id', profile.id)
+      : Promise.resolve({ count: 0 }),
   ])
-  const pendingWeeks = new Set(((weeks.data ?? []) as { user_id: string; week_start: string }[]).map((w) => `${w.user_id}|${w.week_start}`)).size
 
   return (
     <AppShell
       nav={navFor(role, profile.tracks_time, reports > 0)}
-      counts={{ approvals: (leave.count ?? 0) + pendingWeeks, notifications: notif.count ?? 0 }}
+      counts={{ approvals: (leave.count ?? 0) + (days.count ?? 0), notifications: notif.count ?? 0 }}
       orgName={org.org_name}
       userName={profile.full_name}
       roleLabel={ROLE_LABEL[role]}

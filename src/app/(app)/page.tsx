@@ -8,35 +8,39 @@ import { LEAVE_LABEL, LEAVE_STATUS_LABEL, type LeaveBalanceRow, type LeaveReques
 export const metadata = { title: 'Dashboard' }
 
 export default async function Dashboard() {
-  const { supabase, profile, org, today, isApprover } = await requireContext()
+  const { supabase, profile, org, today, isApprover, reportIds } = await requireContext()
   const weekStart = mondayOf(today)
   const weekEnd = addDays(weekStart, 6)
   const year = Number(today.slice(0, 4))
 
-  const [entries, balance, upcoming, notifs, pendingLeave, submittedWeeks] = await Promise.all([
+  const [entries, balance, upcoming, notifs, pendingLeave, submittedDays, todaySheet] = await Promise.all([
     profile.tracks_time
       ? supabase.from('time_entries').select('start_time,end_time,break_min,status').eq('user_id', profile.id).gte('work_date', weekStart).lte('work_date', weekEnd)
       : Promise.resolve({ data: [] }),
     supabase.rpc('leave_balance', { p_user: profile.id, p_year: year }),
     supabase.from('leave_requests').select('*').eq('user_id', profile.id).in('status', ['pending', 'approved', 'changes']).gte('end_date', today).order('start_date').limit(5),
     supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(5),
-    isApprover
-      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').neq('user_id', profile.id)
+    isApprover && reportIds.length
+      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').in('user_id', reportIds)
       : Promise.resolve({ count: 0 }),
     isApprover
-      ? supabase.from('time_entries').select('user_id, week_start').eq('status', 'submitted').neq('user_id', profile.id)
-      : Promise.resolve({ data: [] }),
+      ? supabase.from('daily_timesheets').select('id', { count: 'exact', head: true }).eq('status', 'submitted').neq('user_id', profile.id)
+      : Promise.resolve({ count: 0 }),
+    profile.tracks_time
+      ? supabase.from('daily_timesheets').select('status').eq('user_id', profile.id).eq('work_date', today).maybeSingle()
+      : Promise.resolve({ data: null }),
   ])
 
   const weekEntries = (entries.data ?? []) as Pick<TimeEntry, 'start_time' | 'end_time' | 'break_min' | 'status'>[]
   const loggedMin = weekEntries.reduce((s, e) => s + entryMinutes(e), 0)
-  const toSubmit = weekEntries.filter((e) => ['draft', 'changes', 'rejected'].includes(e.status)).length
+  const todayStatus = (todaySheet.data as { status: string } | null)?.status
+  const toSubmit = todayStatus === 'draft' || todayStatus === 'changes'
   const bal = (balance.data ?? []) as LeaveBalanceRow[]
   const annual = bal.find((b) => b.type === 'annual')
   const sick = bal.find((b) => b.type === 'sick')
   const leaves = (upcoming.data ?? []) as LeaveRequest[]
   const pendingMine = leaves.filter((l) => l.status === 'pending').length
-  const weeks = new Set(((submittedWeeks.data ?? []) as { user_id: string; week_start: string }[]).map((w) => `${w.user_id}|${w.week_start}`)).size
+  const days = submittedDays.count ?? 0
   const targetMin = org.hours_per_day * 60 * 5
   const first = profile.full_name.split(' ')[0]
 
@@ -60,12 +64,12 @@ export default async function Dashboard() {
         {sick && <Stat label="Sick leave left" value={`${n1(sick.remaining ?? 0)} d`} sub={`of ${n1(sick.allocated ?? 0)} days`} />}
         <Stat label="My pending requests" value={pendingMine} sub="awaiting approval" />
         {isApprover && <Stat label="Leave to approve" value={pendingLeave.count ?? 0} tone={(pendingLeave.count ?? 0) > 0 ? 'warn' : undefined} sub="requests" />}
-        {isApprover && <Stat label="Timesheets to approve" value={weeks} tone={weeks > 0 ? 'warn' : undefined} sub="person-weeks" />}
+        {isApprover && <Stat label="Timesheets to approve" value={days} tone={days > 0 ? 'warn' : undefined} sub="daily timesheets" />}
       </div>
 
-      {profile.tracks_time && toSubmit > 0 && (
+      {profile.tracks_time && toSubmit && (
         <div className="notice n-warn">
-          <Icon name="clock" /> <span>You have {toSubmit} unsubmitted time entr{toSubmit === 1 ? 'y' : 'ies'} this week. <Link href="/timesheet">Open timesheet</Link></span>
+          <Icon name="clock" /> <span>Today&apos;s timesheet has not been submitted yet. <Link href="/timesheet">Open timesheet</Link></span>
         </div>
       )}
 

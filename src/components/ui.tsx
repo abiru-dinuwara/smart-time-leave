@@ -70,12 +70,33 @@ export function Bar({ value, tone }: { value: number; tone?: 'g' | 'r' }) {
   )
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function Field({
+  label,
+  hint,
+  error,
+  required,
+  htmlFor,
+  children,
+}: {
+  label: string
+  hint?: string
+  error?: string
+  required?: boolean
+  htmlFor?: string
+  children: ReactNode
+}) {
   return (
-    <div className="fld">
-      <label>{label}</label>
+    <div className={`fld${error ? ' has-err' : ''}`}>
+      <label htmlFor={htmlFor}>
+        {label}
+        {required && <span className="req" aria-hidden="true"> *</span>}
+      </label>
       {children}
-      {hint && <span className="hint">{hint}</span>}
+      {error ? (
+        <span className="ferr" role="alert">{error}</span>
+      ) : (
+        hint && <span className="hint">{hint}</span>
+      )}
     </div>
   )
 }

@@ -35,6 +35,14 @@ export const fmtRange = (a: string, b: string) =>
   a === b ? fmtDate(a) : `${fmtDate(a, { day: 'numeric', month: 'short' })} – ${fmtDate(b, { day: 'numeric', month: 'short', year: 'numeric' })}`
 export const fmtDateTime = (iso: string, tz: string) =>
   new Date(iso).toLocaleString('en-GB', { timeZone: tz, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+/** "Tuesday, 24 November 2026" */
+export const fmtDateLong = (s: string) => fmtDate(s, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+/** Clock time of a timestamp in the company time zone, e.g. "14:35". */
+export const fmtTime = (iso: string, tz: string) =>
+  new Date(iso).toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
+/** Full timestamp with seconds, e.g. "24 Nov 2026, 14:05:09". */
+export const fmtStamp = (iso: string, tz: string) =>
+  new Date(iso).toLocaleString('en-GB', { timeZone: tz, day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
 // ----- times: Postgres returns "09:00:00" -----
 export const hhmm = (t: string) => t.slice(0, 5)

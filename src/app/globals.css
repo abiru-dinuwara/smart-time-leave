@@ -137,6 +137,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .inp{width:auto}
 .fld textarea{min-height:70px;resize:vertical}
 .fld .hint{font-size:12px;color:var(--muted)}
+.fld .req{color:#B42318}
+.fld .ferr{font-size:12px;color:#B42318}
+.fld.has-err input,.fld.has-err select,.fld.has-err textarea{border-color:#B42318}
+.fld input[readonly]{background:var(--gray-bg)}
 .frow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
 .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
 .filters .inp{min-width:150px}

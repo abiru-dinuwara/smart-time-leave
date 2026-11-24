@@ -18,16 +18,20 @@ export const getContext = cache(async () => {
   const [profileRes, settingsRes, reportsRes] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
     supabase.from('org_settings').select('*').maybeSingle(),
-    supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('manager_id', user.id).eq('active', true),
+    supabase.from('profiles').select('id, active').eq('manager_id', user.id),
   ])
   const profile = profileRes.data as Profile | null
   if (!profile) return null
 
   const org: OrgSettings = (settingsRes.data as OrgSettings | null) ?? { org_name: 'My Company', hours_per_day: 8, timezone: 'UTC', allowed_email_domain: null }
-  const reports = reportsRes.count ?? 0
-  // Anyone with direct reports can approve for them, whatever their role; HR can approve for anyone.
+  const reportRows = (reportsRes.data ?? []) as { id: string; active: boolean }[]
+  /** Everyone whose line manager is this user (leave requests are approved ONLY by the line manager). */
+  const reportIds = reportRows.map((r) => r.id)
+  const reports = reportRows.filter((r) => r.active).length
+  // Anyone with direct reports approves for them, whatever their role.
+  // HR additionally reviews timesheets for anyone, but no longer approves leave.
   const isApprover = profile.role === 'hr' || profile.role === 'manager' || reports > 0
-  return { supabase, user, profile, org, reports, isApprover, today: todayIn(org.timezone) }
+  return { supabase, user, profile, org, reports, reportIds, isApprover, today: todayIn(org.timezone) }
 })
 
 /** Use at the top of every page and server action that needs a logged-in user. */
