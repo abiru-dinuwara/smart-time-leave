@@ -8,7 +8,7 @@ import { LEAVE_LABEL, LEAVE_STATUS_LABEL, type LeaveBalanceRow, type LeaveReques
 export const metadata = { title: 'Dashboard' }
 
 export default async function Dashboard() {
-  const { supabase, profile, org, today, isApprover, reportIds } = await requireContext()
+  const { supabase, profile, org, today, isApprover, leaveApproveIds } = await requireContext()
   const weekStart = mondayOf(today)
   const weekEnd = addDays(weekStart, 6)
   const year = Number(today.slice(0, 4))
@@ -20,8 +20,8 @@ export default async function Dashboard() {
     supabase.rpc('leave_balance', { p_user: profile.id, p_year: year }),
     supabase.from('leave_requests').select('*').eq('user_id', profile.id).in('status', ['pending', 'approved', 'changes']).gte('end_date', today).order('start_date').limit(5),
     supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(5),
-    isApprover && reportIds.length
-      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').in('user_id', reportIds)
+    isApprover && leaveApproveIds.length
+      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').in('user_id', leaveApproveIds)
       : Promise.resolve({ count: 0 }),
     isApprover
       ? supabase.from('daily_timesheets').select('id', { count: 'exact', head: true }).eq('status', 'submitted').neq('user_id', profile.id)

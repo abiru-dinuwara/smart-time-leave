@@ -21,15 +21,6 @@ export async function saveLeave(prev: FormState, formData: FormData): Promise<Fo
   const errors = validateLeave(input, { today, intent })
   if (hasErrors(errors)) return fail('Please fix the highlighted fields.', errors)
 
-  if (intent === 'pending') {
-    // Leave goes ONLY to the line manager. Without an active one, nobody could approve it.
-    const manager = profile.manager_id
-      ? ((await supabase.from('profiles').select('id, active').eq('id', profile.manager_id).maybeSingle()).data as { id: string; active: boolean } | null)
-      : null
-    if (!manager?.active)
-      return fail('You do not have an active line manager, so this request cannot be submitted. Ask HR or an administrator to assign your line manager on the People page. You can save it as a draft meanwhile.')
-  }
-
   const row = {
     type: input.type,
     start_date: input.start_date,
@@ -48,7 +39,7 @@ export async function saveLeave(prev: FormState, formData: FormData): Promise<Fo
     if (error) return fail(friendly(error.message))
   }
   revalidatePath('/', 'layout')
-  back('/leave', 'ok', intent === 'draft' ? 'Draft saved.' : 'Leave request sent to your line manager for approval.')
+  back('/leave', 'ok', intent === 'draft' ? 'Draft saved.' : 'Leave request sent for approval.')
 }
 
 /** Cancel a draft, pending or changes-requested request. Approved leave cannot be cancelled (enforced in the database). */

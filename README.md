@@ -34,7 +34,7 @@ You need: **Node.js 20 or newer** (nodejs.org) and a free **Supabase** account (
 2. Open **SQL Editor → New query**.
 3. Open `supabase/migrations/0001_schema.sql` from this folder, copy everything, paste it into the editor and click **Run**. It should say *Success*.
 4. Do the same with `supabase/migrations/0002_security.sql`.
-5. Do the same with `supabase/migrations/0003_daily_timesheet_leave_workflow.sql`.
+5. Do the same with `supabase/migrations/0003_daily_timesheet_leave_workflow.sql`, then `0004_leave_without_manager.sql`.
 
 > Run them in that order, once each. If you make a mistake on a fresh project, you can delete the project and start again.
 
@@ -64,7 +64,7 @@ npm run dev
 
 1. **Policies & Holidays**: set your company name, hours per day, time zone (for example `Asia/Colombo`), the leave allowances and your public holidays.
 2. Create accounts for your staff the same way as in step 3 (Authentication → Users).
-3. **People**: for each person set their **line manager** and **role**. Leave requests go **only** to the line manager — someone without an active line manager cannot submit leave until one is assigned. Timesheets go to the line manager, or to HR when there is none.
+3. **People**: for each person set their **line manager** and **role**. Leave requests go to the line manager; anyone without an active line manager can still request leave and it goes to the System Administrator(s). Timesheets go to the line manager, or to HR when there is none.
 4. **Projects**: ask a Project Manager to create projects (or create them yourself). People can only log time against active projects.
 
 ---
@@ -108,5 +108,4 @@ When you change the database later, add a new file such as `0003_something.sql` 
 | "Your project's URL and key are required" | `.env.local` is missing or you did not restart `npm run dev` after creating it. |
 | An employee says "Not enough annual leave" | Their balance for that calendar year is used up. HR can raise the allowance in Policies & Holidays. |
 | A manager sees no approvals | The employee has no line manager set, or the manager is not set on the People page. |
-| "You do not have an active line manager" when requesting leave | Set the person's line manager on the People page (and make sure that manager's account is active). |
 | "The 30-minute editing period has ended" | Working as designed. Ask the manager to use **Request changes** on that day; the employee can then correct and resubmit it. |

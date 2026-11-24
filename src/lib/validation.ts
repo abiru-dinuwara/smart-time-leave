@@ -31,6 +31,12 @@ export const BREAK_MAX_MIN = 600
 export const TASK_MAX = 200
 export const DESCRIPTION_MAX = 1000
 
+/** "13:05" -> "1:05 PM" (12:xx PM is noon, 12:xx AM is midnight). */
+export function fmt12(t: string) {
+  const [h, m] = t.split(':').map(Number)
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+}
+
 export interface TimeEntryInput {
   project_id: string
   task: string
@@ -76,7 +82,8 @@ export function validateTimeEntry(
 
   const timesOk = !errors.start_time && !errors.end_time
   const worked = timesOk ? toMin(v.end_time) - toMin(v.start_time) : 0
-  if (timesOk && worked <= 0) errors.end_time = 'The end time must be later than the start time.'
+  if (timesOk && worked <= 0)
+    errors.end_time = `The end time (${fmt12(v.end_time)}) must be later than the start time (${fmt12(v.start_time)}). Entries cannot run past midnight.`
 
   let breakMin = NaN
   if (v.break_min === '') errors.break_min = 'Enter the break in minutes (0 if you took none).'

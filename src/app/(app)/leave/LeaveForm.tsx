@@ -27,7 +27,7 @@ export default function LeaveForm({
 }: {
   today: string
   req?: LeaveFormValues
-  /** Active line manager; null blocks submission (drafts are still allowed). */
+  /** Active line manager; null = the request goes to an administrator. */
   managerName: string | null
 }) {
   const [state, action, pending] = useActionState(saveLeave, initialFormState)
@@ -61,7 +61,9 @@ function Inner({
   const [end, setEnd] = useState(v.end_date ?? '')
   const [half, setHalf] = useState(v.half || 'none')
   const [clientErrors, setClientErrors] = useState<FieldErrors>({})
-  const errors: FieldErrors = hasErrors(clientErrors) ? clientErrors : serverErrors
+  const [checked, setChecked] = useState(false)
+  const [lastIntent, setLastIntent] = useState<'draft' | 'pending'>('pending')
+  const errors: FieldErrors = checked ? clientErrors : serverErrors
   const uid = id ?? 'new'
 
   function changeStart(value: string) {
@@ -78,14 +80,23 @@ function Inner({
     const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
     const intent = submitter?.value === 'draft' ? 'draft' : 'pending'
     const found = validateLeave(readLeave(new FormData(e.currentTarget)), { today, intent })
+    setLastIntent(intent)
     setClientErrors(found)
+    setChecked(true)
     if (hasErrors(found)) e.preventDefault()
   }
 
+  function onChange(e: FormEvent<HTMLFormElement>) {
+    if (checked || hasErrors(serverErrors)) {
+      setClientErrors(validateLeave(readLeave(new FormData(e.currentTarget)), { today, intent: lastIntent }))
+      setChecked(true)
+    }
+  }
+
   return (
-    <form action={action} onSubmit={onSubmit} noValidate>
+    <form action={action} onSubmit={onSubmit} onChange={onChange} noValidate>
       {id && <input type="hidden" name="id" value={id} />}
-      {message && !hasErrors(clientErrors) && <Notice kind="bad">{message}</Notice>}
+      {message && !checked && <Notice kind="bad">{message}</Notice>}
       <div className="frow">
         <Field label="Leave type" required error={errors.type} htmlFor={`lt-${uid}`}>
           <select id={`lt-${uid}`} name="type" defaultValue={v.type} required aria-invalid={Boolean(errors.type)}>
@@ -131,15 +142,10 @@ function Inner({
       </Field>
       <p className="hint-line" style={{ marginBottom: 10 }}>
         Weekends and company holidays are not counted. Your balance and overlapping requests are checked when you submit.
-        {managerName ? <> Your request goes to <b>{managerName}</b>, your line manager, for approval.</> : null}
+        {managerName ? <> Your request goes to <b>{managerName}</b>, your line manager, for approval.</> : <> Your request goes to an administrator for approval.</>}
       </p>
-      {!managerName && (
-        <Notice kind="warn">
-          You do not have an active line manager, so you cannot submit leave requests yet. Ask HR or an administrator to assign your line manager. You can save a draft meanwhile.
-        </Notice>
-      )}
       <div className="row">
-        <button className="btn primary" type="submit" name="intent" value="pending" disabled={pending || !managerName}>
+        <button className="btn primary" type="submit" name="intent" value="pending" disabled={pending}>
           {pending ? 'Sending…' : id ? 'Resubmit for approval' : 'Submit request'}
         </button>
         <button className="btn" type="submit" name="intent" value="draft" disabled={pending}>Save as draft</button>

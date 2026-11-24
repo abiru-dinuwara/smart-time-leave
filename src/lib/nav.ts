@@ -13,7 +13,7 @@ export function navFor(role: AppRole, tracksTime: boolean, hasReports: boolean):
   if (tracksTime) items.push({ href: '/timesheet', label: 'My Timesheet', icon: 'clock' })
   items.push({ href: '/leave', label: 'My Leave', icon: 'leave' })
 
-  if (role === 'manager' || role === 'hr' || hasReports) items.push({ href: '/approvals', label: 'Approvals', icon: 'check', badge: 'approvals' })
+  if (role === 'manager' || role === 'hr' || role === 'admin' || hasReports) items.push({ href: '/approvals', label: 'Approvals', icon: 'check', badge: 'approvals' })
   if (role === 'hr' || role === 'leadership') items.push({ href: '/team', label: 'Employee Overview', icon: 'users' })
   else if (role === 'manager' || hasReports) items.push({ href: '/team', label: 'Team Availability', icon: 'users' })
   if (role === 'pm' || role === 'hr' || role === 'leadership' || role === 'admin') items.push({ href: '/projects', label: 'Projects', icon: 'folder' })

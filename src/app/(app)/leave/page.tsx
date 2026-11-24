@@ -44,14 +44,9 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
     <>
       <PageHead
         title="My Leave"
-        sub={managerName ? `Request time off. Requests are approved by your line manager, ${managerName}.` : 'Request time off and follow its approval.'}
+        sub={managerName ? `Request time off. Requests are approved by your line manager, ${managerName}.` : 'Request time off. Requests are approved by an administrator.'}
       />
       <Flash ok={one(sp.ok)} error={one(sp.error)} />
-      {!managerName && (
-        <div className="notice n-warn">
-          You do not have an active line manager assigned. Leave requests can only be approved by your line manager, so you cannot submit a request until HR or an administrator assigns one on the People page.
-        </div>
-      )}
 
       <div className="stats">
         {balances.filter((b) => b.type !== 'unpaid').map((b) => (
@@ -108,7 +103,7 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
                       <td><Badge label={label} tone={tone} /></td>
                       <td>
                         {r.status === 'pending' && (
-                          <div className="sm">Waiting for {managerName ?? 'your line manager'}{submitted ? <span className="muted xs"> · sent {fmtDateTime(submitted.created_at, org.timezone)}</span> : null}</div>
+                          <div className="sm">Waiting for {managerName ?? 'an administrator'}{submitted ? <span className="muted xs"> · sent {fmtDateTime(submitted.created_at, org.timezone)}</span> : null}</div>
                         )}
                         {['approved', 'rejected', 'changes'].includes(r.status) && r.decided_at && (
                           <div className="sm">

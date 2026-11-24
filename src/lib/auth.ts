@@ -15,10 +15,11 @@ export const getContext = cache(async () => {
   } = await supabase.auth.getUser()
   if (!user) return null
 
-  const [profileRes, settingsRes, reportsRes] = await Promise.all([
+  const [profileRes, settingsRes, reportsRes, allRes] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
     supabase.from('org_settings').select('*').maybeSingle(),
     supabase.from('profiles').select('id, active').eq('manager_id', user.id),
+    supabase.from('profiles').select('id, manager_id, active, role'),
   ])
   const profile = profileRes.data as Profile | null
   if (!profile) return null
@@ -30,8 +31,14 @@ export const getContext = cache(async () => {
   const reports = reportRows.filter((r) => r.active).length
   // Anyone with direct reports approves for them, whatever their role.
   // HR additionally reviews timesheets for anyone, but no longer approves leave.
-  const isApprover = profile.role === 'hr' || profile.role === 'manager' || reports > 0
-  return { supabase, user, profile, org, reports, reportIds, isApprover, today: todayIn(org.timezone) }
+  // People without an active line manager: their leave is decided by administrators.
+  const everyone = (allRes.data ?? []) as { id: string; manager_id: string | null; active: boolean; role: string }[]
+  const activeIds = new Set(everyone.filter((p) => p.active).map((p) => p.id))
+  const noManagerIds = everyone.filter((p) => !p.manager_id || !activeIds.has(p.manager_id)).map((p) => p.id)
+  /** Whose leave requests this user may decide. */
+  const leaveApproveIds = profile.role === 'admin' ? [...new Set([...reportIds, ...noManagerIds.filter((id) => id !== user.id)])] : reportIds
+  const isApprover = profile.role === 'hr' || profile.role === 'manager' || profile.role === 'admin' || reports > 0
+  return { supabase, user, profile, org, reports, reportIds, leaveApproveIds, isApprover, today: todayIn(org.timezone) }
 })
 
 /** Use at the top of every page and server action that needs a logged-in user. */

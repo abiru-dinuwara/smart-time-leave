@@ -4,7 +4,7 @@ import { ROLE_LABEL } from '@/lib/types'
 import AppShell from '@/components/AppShell'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const { supabase, profile, org, reports, reportIds, isApprover } = await requireContext()
+  const { supabase, profile, org, reports, leaveApproveIds, isApprover } = await requireContext()
 
   const role = profile.role
   const showApprovals = isApprover
@@ -12,8 +12,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const [notif, leave, days] = await Promise.all([
     supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('read', false),
     // leave is approved only by the line manager -> count my direct reports' pending requests
-    showApprovals && reportIds.length
-      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').in('user_id', reportIds)
+    showApprovals && leaveApproveIds.length
+      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').in('user_id', leaveApproveIds)
       : Promise.resolve({ count: 0 }),
     showApprovals
       ? supabase.from('daily_timesheets').select('id', { count: 'exact', head: true }).eq('status', 'submitted').neq('user_id', profile.id)

@@ -50,21 +50,34 @@ export default function EntryForm({
 }) {
   const [state, action, pending] = useActionState(saveEntry, initialFormState)
   const [clientErrors, setClientErrors] = useState<FieldErrors>({})
-  const errors: FieldErrors = hasErrors(clientErrors) ? clientErrors : state.errors
+  // once the browser has checked the form, keep its errors in sync with what is typed
+  const [checked, setChecked] = useState(false)
+  const errors: FieldErrors = checked ? clientErrors : state.errors
   const v = state.values ?? entry ?? { project_id: '', task: '', description: '', start_time: '', end_time: '', break_min: '0' }
   const uid = entry?.id ?? 'new'
 
+  const check = (form: HTMLFormElement) => validateTimeEntry(readTimeEntry(new FormData(form)), others).errors
+
   function onSubmit(e: FormEvent<HTMLFormElement>) {
-    const { errors: found } = validateTimeEntry(readTimeEntry(new FormData(e.currentTarget)), others)
+    const found = check(e.currentTarget)
     setClientErrors(found)
+    setChecked(true)
     if (hasErrors(found)) e.preventDefault()
   }
 
+  function onChange(e: FormEvent<HTMLFormElement>) {
+    // re-check after every change when errors are visible, so fixed fields clear immediately
+    if (checked || hasErrors(state.errors)) {
+      setClientErrors(check(e.currentTarget))
+      setChecked(true)
+    }
+  }
+
   return (
-    <form action={action} onSubmit={onSubmit} noValidate key={state.attempt}>
+    <form action={action} onSubmit={onSubmit} onChange={onChange} noValidate key={state.attempt}>
       {entry?.id && <input type="hidden" name="id" value={entry.id} />}
       {sheetDate && <input type="hidden" name="sheet_date" value={sheetDate} />}
-      {state.message && !hasErrors(clientErrors) && <Notice kind="bad">{state.message}</Notice>}
+      {state.message && !checked && <Notice kind="bad">{state.message}</Notice>}
       <div className="frow">
         <Field label="Work date" hint="Set automatically" required htmlFor={`d-${uid}`}>
           <input id={`d-${uid}`} value={dateLabel} readOnly aria-readonly="true" />

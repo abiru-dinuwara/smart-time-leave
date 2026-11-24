@@ -24,14 +24,14 @@ function DecisionButtons({ label }: { label: string }) {
 }
 
 export default async function ApprovalsPage({ searchParams }: { searchParams: SP }) {
-  const { supabase, profile, org, reportIds } = await requireApprover()
+  const { supabase, profile, org, leaveApproveIds } = await requireApprover()
   const sp = await searchParams
   const tab = one(sp.tab) === 'timesheets' ? 'timesheets' : 'leave'
 
   const [leaveRes, sheetRes, entRes] = await Promise.all([
     // Leave: ONLY requests from people who report directly to me. HR is not a leave approver.
-    reportIds.length
-      ? supabase.from('leave_requests').select('*, employee:profiles!user_id(full_name,position)').eq('status', 'pending').in('user_id', reportIds).order('start_date')
+    leaveApproveIds.length
+      ? supabase.from('leave_requests').select('*, employee:profiles!user_id(full_name,position)').eq('status', 'pending').in('user_id', leaveApproveIds).order('start_date')
       : Promise.resolve({ data: [] }),
     // Timesheets: unchanged routing (line manager, HR for anyone) — one card per person-day.
     supabase.from('daily_timesheets').select('*, employee:profiles!user_id(full_name,position)').eq('status', 'submitted').neq('user_id', profile.id).order('work_date').order('submitted_at'),
@@ -49,8 +49,10 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
         title="Approvals"
         sub={
           profile.role === 'hr'
-            ? 'Leave requests are approved only by each employee’s line manager. As HR you can review any submitted timesheet.'
-            : 'Requests from the people who report to you.'
+            ? 'Leave requests are approved by each employee’s line manager. As HR you can review any submitted timesheet.'
+            : profile.role === 'admin'
+              ? 'Leave from your direct reports and from anyone without an active line manager.'
+              : 'Requests from the people who report to you.'
         }
       />
       <Flash ok={one(sp.ok)} error={one(sp.error)} />
