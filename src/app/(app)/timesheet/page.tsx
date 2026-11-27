@@ -1,11 +1,15 @@
 import Link from 'next/link'
 import { requireContext } from '@/lib/auth'
-import { Badge, Empty, Flash, Notice, PageHead, Stat, one, type SP } from '@/components/ui'
+import { approverInfo } from '@/lib/routing'
+import { Badge, Empty, Flash, Notice, PageHead, Stat, Tabs, Tag, one, type SP } from '@/components/ui'
+import ConfirmButton from '@/components/ConfirmButton'
+import SubmitButton from '@/components/SubmitButton'
 import { entryMinutes, fmtDate, fmtDateLong, fmtDateTime, fmtMinutes, fmtStamp, fmtTime, hhmm, isIsoDate, n1 } from '@/lib/dates'
-import { ENTRY_STATUS_LABEL, TIMESHEET_EDIT_WINDOW_MIN, type DailyTimesheet, type Project, type TimeEntry } from '@/lib/types'
+import { ENTRY_STATUS_LABEL, ROLE_LABEL, TIMESHEET_EDIT_WINDOW_MIN, type DailyTimesheet, type Profile, type Project, type TimeEntry } from '@/lib/types'
 import { deleteEntry, submitDay } from './actions'
 import Countdown from './Countdown'
 import EntryForm from './EntryForm'
+import TimesheetHistory from './TimesheetHistory'
 
 export const metadata = { title: 'My Timesheet' }
 // The editing window depends on the current time, so never cache this page.
@@ -15,8 +19,10 @@ type Entry = TimeEntry & { project: { code: string; name: string } | null }
 type Sheet = DailyTimesheet & { reviewer: { full_name: string } | null }
 
 export default async function TimesheetPage({ searchParams }: { searchParams: SP }) {
-  const { supabase, profile, org, today } = await requireContext()
+  const ctx = await requireContext()
+  const { supabase, profile, org, today } = ctx
   const sp = await searchParams
+  const tab = one(sp.tab) === 'history' ? 'history' : 'today'
 
   if (!profile.tracks_time) {
     return (
@@ -27,14 +33,39 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
     )
   }
 
-  // Days a manager sent back for changes are the ONLY earlier days that can be opened.
-  const [changesRes, staleRes, projectsRes] = await Promise.all([
+  const tabs = (
+    <Tabs
+      current={tab}
+      items={[
+        { key: 'today', label: 'Today', href: '/timesheet' },
+        { key: 'history', label: 'History', href: '/timesheet?tab=history' },
+      ]}
+    />
+  )
+  if (tab === 'history') {
+    return (
+      <>
+        <PageHead title="My Timesheet" sub="Your previous daily timesheets, their status and the approver's comments." />
+        <Flash ok={one(sp.ok)} error={one(sp.error)} />
+        {tabs}
+        <TimesheetHistory ctx={ctx} sp={sp} />
+      </>
+    )
+  }
+
+  // Days sent back for changes are the ONLY earlier days that can be opened.
+  // Projects: only active projects I am assigned to (or manage) — the database enforces the same rule.
+  const [changesRes, staleRes, projectsRes, approver] = await Promise.all([
     supabase.from('daily_timesheets').select('work_date, review_note').eq('user_id', profile.id).eq('status', 'changes').order('work_date'),
     supabase.from('daily_timesheets').select('id', { count: 'exact', head: true }).eq('user_id', profile.id).eq('status', 'draft').lt('work_date', today),
-    supabase.from('projects').select('id, code, name').eq('status', 'active').order('code'),
+    supabase.rpc('my_loggable_projects'),
+    approverInfo(ctx),
   ])
   const corrections = (changesRes.data ?? []) as { work_date: string; review_note: string | null }[]
   const projects = (projectsRes.data ?? []) as Pick<Project, 'id' | 'code' | 'name'>[]
+  /** When editing, keep the entry's own project selectable even if I was unassigned since (history stays editable). */
+  const projectsFor = (e: { project_id: string; project: { code: string; name: string } | null }) =>
+    projects.some((p) => p.id === e.project_id) || !e.project ? projects : [...projects, { id: e.project_id, code: e.project.code, name: `${e.project.name} (no longer assigned)` }]
 
   const correctParam = one(sp.correct)
   const correcting = isIsoDate(correctParam) && correctParam !== today && corrections.some((c) => c.work_date === correctParam)
@@ -43,16 +74,16 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
   const editId = one(sp.edit)
 
   const [sheetRes, entriesRes, reviewsRes, holRes, leaveRes] = await Promise.all([
-    supabase.from('daily_timesheets').select('*, reviewer:profiles!reviewed_by(full_name)').eq('user_id', profile.id).eq('work_date', date).maybeSingle(),
-    supabase.from('time_entries').select('*, project:projects(code,name)').eq('user_id', profile.id).eq('work_date', date).order('start_time'),
-    supabase.from('timesheet_reviews').select('*, actor:profiles!actor_id(full_name)').eq('user_id', profile.id).eq('work_date', date).order('created_at', { ascending: false }),
+    supabase.from('daily_timesheets').select('id, user_id, work_date, status, submitted_at, last_submitted_at, edit_until, resubmissions, reviewed_by, reviewed_at, review_note, approval_route, created_at, reviewer:profiles!reviewed_by(full_name)').eq('user_id', profile.id).eq('work_date', date).maybeSingle(),
+    supabase.from('time_entries').select('id, user_id, work_date, week_start, project_id, task, description, start_time, end_time, break_min, status, review_note, submitted_at, project:projects(code,name)').eq('user_id', profile.id).eq('work_date', date).order('start_time'),
+    supabase.from('timesheet_reviews').select('id, action, note, created_at, actor_role, actor:profiles!actor_id(full_name)').eq('user_id', profile.id).eq('work_date', date).order('created_at', { ascending: false }),
     supabase.from('holidays').select('name').eq('holiday_date', date).maybeSingle(),
     supabase.from('leave_requests').select('id').eq('user_id', profile.id).eq('status', 'approved').lte('start_date', date).gte('end_date', date).limit(1),
   ])
 
-  const sheet = sheetRes.data as Sheet | null
-  const entries = (entriesRes.data ?? []) as Entry[]
-  const reviews = (reviewsRes.data ?? []) as { id: string; action: string; note: string; created_at: string; actor: { full_name: string } | null }[]
+  const sheet = sheetRes.data as unknown as Sheet | null
+  const entries = (entriesRes.data ?? []) as unknown as Entry[]
+  const reviews = (reviewsRes.data ?? []) as unknown as { id: string; action: string; note: string; created_at: string; actor_role: Profile['role'] | null; actor: { full_name: string } | null }[]
   const holiday = (holRes.data as { name: string } | null)?.name
   const onLeave = (leaveRes.data ?? []).length > 0
 
@@ -60,7 +91,8 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
   const now = Date.now()
   const windowOpen = status === 'submitted' && !sheet?.reviewed_at && !!sheet?.edit_until && new Date(sheet.edit_until).getTime() > now
   const editable = correcting ? status === 'changes' : status === 'draft' || status === 'changes' || windowOpen
-  const canSubmit = entries.length > 0 && ((status === 'draft' && date === today) || status === 'changes')
+  const canSubmit = entries.length > 0 && ((status === 'draft' && date === today) || status === 'changes') && !approver.blocked
+  const approverName = approver.route === 'hr' ? 'HR' : approver.managerName ?? 'your line manager'
   const total = entries.reduce((s, e) => s + entryMinutes(e), 0)
   const target = org.hours_per_day * 60
   const toForm = (e: Entry) => ({
@@ -78,12 +110,16 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
     <>
       <PageHead
         title="My Timesheet"
-        sub={correcting ? 'Your manager asked for changes to this day. Correct it and resubmit.' : "Log today's work, then submit it once for approval."}
+        sub={correcting ? `${approverName === 'HR' ? 'HR' : 'Your approver'} asked for changes to this day. Correct it and resubmit.` : `Log today's work, then submit it once for approval. ${approver.sentence}`}
       >
         {correcting && <Link className="btn" href="/timesheet">← Back to today</Link>}
       </PageHead>
 
       <Flash ok={one(sp.ok)} error={one(sp.error)} />
+      {!correcting && tabs}
+      {approver.blocked && (status === 'draft' || status === 'changes') && (
+        <Notice kind="warn" title="Submission is not available">{approver.sentence} You can still add entries for today.</Notice>
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="row between">
@@ -92,7 +128,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
             <h2 style={{ margin: '2px 0 0' }}>{fmtDateLong(date)}</h2>
           </div>
           <div className="row">
-            {holiday && <Badge label={holiday} tone="red" />}
+            {holiday && <Badge label={`Holiday: ${holiday}`} tone="blue" icon={false} />}
             {onLeave && <Badge label="On approved leave" tone="green" />}
             <Badge label={sheet ? ENTRY_STATUS_LABEL[status][0] : 'Not started'} tone={sheet ? ENTRY_STATUS_LABEL[status][1] : 'gray'} />
           </div>
@@ -116,7 +152,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
               : status === 'submitted'
                 ? 'Editing period ended'
                 : status === 'approved' || status === 'rejected'
-                  ? 'Reviewed by your manager'
+                  ? `Reviewed by ${sheet?.reviewer?.full_name ?? 'your approver'}`
                   : 'Until you submit'
           }
         />
@@ -125,7 +161,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
       {!correcting && corrections.length > 0 && (
         <Notice kind="warn">
           <span>
-            <b>Your manager asked for changes</b> on{' '}
+            <b>Changes were requested</b> on{' '}
             {corrections.map((c, i) => (
               <span key={c.work_date}>
                 {i > 0 && ', '}
@@ -139,14 +175,14 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
 
       {status === 'changes' && sheet?.review_note && (
         <Notice kind="warn">
-          <span><b>{sheet.reviewer?.full_name ?? 'Your manager'} asked for changes:</b> {sheet.review_note}</span>
+          <span><b>{sheet.reviewer?.full_name ?? 'Your approver'} asked for changes:</b> {sheet.review_note}</span>
         </Notice>
       )}
       {windowOpen && sheet?.edit_until && (
         <Notice kind="info">
           <span>
             Submitted at {fmtTime(sheet.last_submitted_at ?? sheet.submitted_at ?? sheet.edit_until, org.timezone)}. You can still edit or add entries for{' '}
-            {TIMESHEET_EDIT_WINDOW_MIN} minutes after submitting — until <b>{fmtTime(sheet.edit_until, org.timezone)}</b>, or until your manager reviews it.
+            {TIMESHEET_EDIT_WINDOW_MIN} minutes after submitting — until <b>{fmtTime(sheet.edit_until, org.timezone)}</b>, or until {approverName} reviews it.
           </span>
         </Notice>
       )}
@@ -155,14 +191,14 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
           <span>
             The {TIMESHEET_EDIT_WINDOW_MIN}-minute editing period
             {sheet?.edit_until && !sheet.reviewed_at ? ` ended at ${fmtTime(sheet.edit_until, org.timezone)}` : ' has ended'}. Your timesheet can no longer be
-            changed and is waiting for your manager&apos;s review.
+            changed and is waiting for review by {approverName}.
           </span>
         </Notice>
       )}
       {(status === 'approved' || status === 'rejected') && (
         <Notice kind={status === 'approved' ? 'ok' : 'bad'}>
           <span>
-            {sheet?.reviewer?.full_name ?? 'Your manager'} {status === 'approved' ? 'approved' : 'rejected'} this timesheet
+            {sheet?.reviewer?.full_name ?? 'Your approver'} {status === 'approved' ? 'approved' : 'rejected'} this timesheet
             {sheet?.reviewed_at ? ` on ${fmtDateTime(sheet.reviewed_at, org.timezone)}` : ''}. It can no longer be changed.
             {sheet?.review_note ? ` “${sheet.review_note}”` : ''}
           </span>
@@ -200,7 +236,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
                     <tr key={e.id}>
                       <td colSpan={6}>
                         <EntryForm
-                          projects={projects}
+                          projects={projectsFor(e)}
                           dateLabel={dateLabel}
                           sheetDate={correcting ? date : undefined}
                           entry={toForm(e)}
@@ -211,7 +247,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
                     </tr>
                   ) : (
                     <tr key={e.id}>
-                      <td><b>{e.project?.code}</b> <span className="muted">{e.project?.name}</span></td>
+                      <td><Tag>{e.project?.code}</Tag> <span className="muted sm">{e.project?.name}</span></td>
                       <td>{e.task || <span className="muted">—</span>}<div className="muted sm">{e.description}</div></td>
                       <td className="nowrap">{hhmm(e.start_time)}–{hhmm(e.end_time)}</td>
                       <td className="num nowrap">{e.break_min} min</td>
@@ -222,7 +258,15 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
                             <Link className="btn s" href={`${selfPath}${selfPath.includes('?') ? '&' : '?'}edit=${e.id}`}>Edit</Link>
                             <form action={deleteEntry} className="inline" style={{ marginLeft: 6 }}>
                               <input type="hidden" name="id" value={e.id} />
-                              <button className="btn s danger" type="submit">Delete</button>
+                              <ConfirmButton
+                                className="btn s danger"
+                                confirmClassName="btn danger-solid"
+                                title="Delete this entry?"
+                                message={<p>{e.project?.code} · {e.task} ({hhmm(e.start_time)}–{hhmm(e.end_time)}) will be removed from this timesheet.</p>}
+                                confirmLabel="Delete entry"
+                              >
+                                Delete
+                              </ConfirmButton>
                             </form>
                           </>
                         )}
@@ -239,7 +283,7 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
             <details className="form" open={entries.length === 0}>
               <summary className="btn s">+ Add entry</summary>
               {projects.length === 0 ? (
-                <Notice>There are no active projects yet. Ask a project manager or administrator to create one.</Notice>
+                <Notice kind="warn" title="You are not assigned to any active project">Ask a project manager to add you to their project team. Only projects you are assigned to can be used in your timesheet.</Notice>
               ) : (
                 <EntryForm projects={projects} dateLabel={dateLabel} sheetDate={correcting ? date : undefined} others={entries} />
               )}
@@ -262,9 +306,9 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
           {(status === 'draft' || status === 'changes') && (
             <form action={submitDay}>
               {correcting && <input type="hidden" name="date" value={date} />}
-              <button className="btn primary" type="submit" disabled={!canSubmit}>
+              <SubmitButton disabled={!canSubmit} pendingLabel="Submitting…">
                 {status === 'changes' ? 'Resubmit timesheet' : 'Submit daily timesheet'}
-              </button>
+              </SubmitButton>
             </form>
           )}
         </div>
@@ -272,20 +316,24 @@ export default async function TimesheetPage({ searchParams }: { searchParams: SP
           <p className="hint-line" style={{ marginTop: 8 }}>
             {entries.length === 0
               ? 'Add at least one entry before submitting.'
-              : `You can submit once per day. After submitting you have ${TIMESHEET_EDIT_WINDOW_MIN} minutes to make corrections.`}
+              : approver.blocked
+                ? approver.sentence
+                : `You can submit once per day. It goes to ${approverName}. After submitting you have ${TIMESHEET_EDIT_WINDOW_MIN} minutes to make corrections.`}
           </p>
         )}
         {reviews.length > 0 && (
           <div style={{ marginTop: 14 }}>
             <div className="lab" style={{ marginBottom: 6 }}>Submission &amp; review history</div>
-            <div className="tline">
+            <ol className="tline">
               {reviews.map((r) => (
-                <div key={r.id}>
-                  <b>{r.action}</b> by {r.actor?.full_name ?? 'someone'} <span className="muted xs">· {fmtDateTime(r.created_at, org.timezone)}</span>
+                <li key={r.id}>
+                  <b>{r.action}</b> by {r.actor?.full_name ?? 'someone'}
+                  {r.actor_role && r.action !== 'Submitted' && r.action !== 'Resubmitted' ? ` (${ROLE_LABEL[r.actor_role]})` : ''}{' '}
+                  <span className="muted xs">· {fmtDateTime(r.created_at, org.timezone)}</span>
                   {r.note && <div className="muted sm">“{r.note}”</div>}
-                </div>
+                </li>
               ))}
-            </div>
+            </ol>
           </div>
         )}
       </div>

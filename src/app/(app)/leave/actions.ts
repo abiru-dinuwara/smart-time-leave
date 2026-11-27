@@ -6,7 +6,9 @@ import { back, friendly } from '@/lib/flash'
 import { field, hasErrors, readLeave, validateLeave, type FormState } from '@/lib/validation'
 
 /**
- * Create / edit a leave request, either as a draft or submitted to the line manager.
+ * Create / edit a leave request, either as a draft or submitted for approval.
+ * The database decides who approves it from the requester's role (line manager for
+ * employees, HR for managers / project managers / leadership) — never from the form.
  * "Today" comes from the company time zone on the server, never from the browser.
  * The database repeats every critical check (migration 0003).
  */
@@ -39,7 +41,7 @@ export async function saveLeave(prev: FormState, formData: FormData): Promise<Fo
     if (error) return fail(friendly(error.message))
   }
   revalidatePath('/', 'layout')
-  back('/leave', 'ok', intent === 'draft' ? 'Draft saved.' : 'Leave request sent for approval.')
+  back('/leave', 'ok', intent === 'draft' ? 'Draft saved.' : 'Leave request sent for approval. You will be notified of the decision.')
 }
 
 /** Cancel a draft, pending or changes-requested request. Approved leave cannot be cancelled (enforced in the database). */
@@ -55,7 +57,7 @@ export async function deleteDraft(formData: FormData) {
   const { supabase } = await requireContext()
   const { data, error } = await supabase.from('leave_requests').delete().eq('id', field(formData, 'id')).select('id')
   if (error) back('/leave', 'error', error.message)
-  if (!data?.length) back('/leave', 'error', 'Only drafts can be deleted.')
+  if (!data?.length) back('/leave', 'error', 'Only drafts that were never submitted can be deleted. Requests with approval history are kept — cancel it instead.')
   revalidatePath('/', 'layout')
   back('/leave', 'ok', 'Draft deleted.')
 }

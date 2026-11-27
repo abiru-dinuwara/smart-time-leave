@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Icon } from '@/components/Icon'
 import { Notice, one, type SP } from '@/components/ui'
+import SubmitButton from '@/components/SubmitButton'
 
 export const metadata = { title: 'Sign in' }
 
@@ -35,7 +36,7 @@ export default async function LoginPage({ searchParams }: { searchParams: SP }) 
           <label htmlFor="password">Password</label>
           <input id="password" name="password" type="password" autoComplete="current-password" required />
         </div>
-        <button className="btn primary" type="submit" style={{ width: '100%', justifyContent: 'center' }}>Sign in</button>
+        <SubmitButton className="btn primary login-btn" pendingLabel="Signing in…">Sign in</SubmitButton>
         <p className="hint-line" style={{ marginTop: 14 }}>No account? Ask your administrator to invite you.</p>
       </form>
     </div>

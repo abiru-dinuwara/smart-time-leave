@@ -1,32 +1,26 @@
-import { requireContext } from '@/lib/auth'
+import { getApprovalCounts, requireContext } from '@/lib/auth'
 import { navFor } from '@/lib/nav'
 import { ROLE_LABEL } from '@/lib/types'
 import AppShell from '@/components/AppShell'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const { supabase, profile, org, reports, leaveApproveIds, isApprover } = await requireContext()
+  const { supabase, profile, org, reports } = await requireContext()
 
-  const role = profile.role
-  const showApprovals = isApprover
-
-  const [notif, leave, days] = await Promise.all([
+  // Two small queries for the badges: unread notifications, and what I can decide right now
+  // (approval_counts applies the same routing rules as the approve functions).
+  const [notif, c] = await Promise.all([
     supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('read', false),
-    // leave is approved only by the line manager -> count my direct reports' pending requests
-    showApprovals && leaveApproveIds.length
-      ? supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').in('user_id', leaveApproveIds)
-      : Promise.resolve({ count: 0 }),
-    showApprovals
-      ? supabase.from('daily_timesheets').select('id', { count: 'exact', head: true }).eq('status', 'submitted').neq('user_id', profile.id)
-      : Promise.resolve({ count: 0 }),
+    getApprovalCounts(),
   ])
 
   return (
     <AppShell
-      nav={navFor(role, profile.tracks_time, reports > 0)}
-      counts={{ approvals: (leave.count ?? 0) + (days.count ?? 0), notifications: notif.count ?? 0 }}
+      nav={navFor(profile.role, profile.tracks_time, reports > 0)}
+      counts={{ approvals: c.leave + c.timesheets, notifications: notif.count ?? 0 }}
       orgName={org.org_name}
       userName={profile.full_name}
-      roleLabel={ROLE_LABEL[role]}
+      userEmail={profile.email}
+      roleLabel={ROLE_LABEL[profile.role]}
     >
       {children}
     </AppShell>

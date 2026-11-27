@@ -13,20 +13,20 @@ export default async function TeamPage() {
   if (!seesAll && !isApprover) redirect('/')
   const isManager = !seesAll
 
-  let q = supabase.from('profiles').select('*').eq('active', true).order('full_name')
+  let q = supabase.from('profiles').select('id, full_name, position, role, department, manager_id, tracks_time').eq('active', true).order('full_name')
   if (isManager) q = q.eq('manager_id', profile.id)
   const { data } = await q
-  const people = ((data ?? []) as Profile[]).filter((p) => p.tracks_time || !isManager)
+  const people = ((data ?? []) as Pick<Profile, 'id' | 'full_name' | 'position' | 'role' | 'department' | 'manager_id' | 'tracks_time'>[]).filter((p) => p.tracks_time || !isManager)
   const ids = people.map((p) => p.id)
 
   const { data: lv } = ids.length
-    ? await supabase.from('leave_requests').select('*').in('user_id', ids).in('status', ['approved', 'pending']).gte('end_date', today).order('start_date')
+    ? await supabase.from('leave_requests').select('user_id, type, start_date, end_date, status').in('user_id', ids).in('status', ['approved', 'pending']).gte('end_date', today).order('start_date')
     : { data: [] }
-  const leaves = (lv ?? []) as LeaveRequest[]
+  const leaves = (lv ?? []) as Pick<LeaveRequest, 'user_id' | 'type' | 'start_date' | 'end_date' | 'status'>[]
   const out = (id: string) => leaves.find((l) => l.user_id === id && l.status === 'approved' && l.start_date <= today && today <= l.end_date)
   const next = (id: string) => leaves.find((l) => l.user_id === id && l.start_date > today)
   const names = new Map(people.map((p) => [p.id, p.full_name]))
-  const manager = (p: Profile) => (p.manager_id ? names.get(p.manager_id) ?? '—' : '—')
+  const manager = (p: Pick<Profile, 'manager_id'>) => (p.manager_id ? names.get(p.manager_id) ?? '—' : '—')
   const outCount = people.filter((p) => out(p.id)).length
 
   return (
@@ -54,7 +54,7 @@ export default async function TeamPage() {
                       <td>{ROLE_LABEL[p.role]}</td>
                       <td>{p.department ?? '—'}</td>
                       {!isManager && <td>{manager(p)}</td>}
-                      <td>{o ? <Badge label={`Away (${LEAVE_LABEL[o.type]})`} tone="green" /> : <Badge label="Available" tone="gray" />}</td>
+                      <td>{o ? <Badge label={`Away (${LEAVE_LABEL[o.type]})`} tone="blue" /> : <Badge label="Available" tone="green" icon={false} />}</td>
                       <td className="sm">{n ? `${fmtRange(n.start_date, n.end_date)} · ${n.status}` : <span className="muted">—</span>}</td>
                     </tr>
                   )

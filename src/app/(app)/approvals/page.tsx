@@ -1,160 +1,164 @@
 import Link from 'next/link'
 import { requireApprover } from '@/lib/auth'
-import { Avatar, Badge, Empty, Flash, PageHead, one, type SP } from '@/components/ui'
+import { fetchApprovalRecords } from '@/lib/approval-records'
+import { Badge, Empty, Flash, KV, Notice, PageHead, Person, Tabs, Tag, one, type SP } from '@/components/ui'
+import { Icon } from '@/components/Icon'
 import { entryMinutes, fmtDateLong, fmtDateTime, fmtMinutes, fmtRange, fmtTime, hhmm, n1 } from '@/lib/dates'
-import { LEAVE_LABEL, type DailyTimesheet, type LeaveRequest, type TimeEntry } from '@/lib/types'
+import { LEAVE_LABEL, ROLE_LABEL, type ApprovalRecord, type TimeEntry } from '@/lib/types'
 import { decideLeave, decideTimesheet } from './actions'
+import DecisionControls from './DecisionControls'
 
 export const metadata = { title: 'Approvals' }
-export const dynamic = 'force-dynamic'
 
-type Req = LeaveRequest & { employee: { full_name: string; position: string | null } | null }
-type Sheet = DailyTimesheet & { employee: { full_name: string; position: string | null } | null }
-type Ent = TimeEntry & { project: { code: string; name: string } | null; employee: { full_name: string; position: string | null } | null }
+type Ent = Pick<TimeEntry, 'id' | 'user_id' | 'work_date' | 'task' | 'description' | 'start_time' | 'end_time' | 'break_min'> & {
+  project: { code: string; name: string } | null
+}
 
-function DecisionButtons({ label }: { label: string }) {
-  return (
-    <div className="row">
-      <button className="btn primary" type="submit" name="decision" value="approved">Approve</button>
-      <button className="btn" type="submit" name="decision" value="changes">Request changes</button>
-      <button className="btn danger" type="submit" name="decision" value="rejected">Reject</button>
-      <span className="hint-line">{label}</span>
-    </div>
+const QUEUE_LIMIT = 200
+
+function RouteTag({ r }: { r: ApprovalRecord }) {
+  return r.route === 'hr' ? (
+    <Tag tone="primary">Routed to HR · {ROLE_LABEL[r.owner_role]}</Tag>
+  ) : (
+    <Tag>Direct report</Tag>
   )
 }
 
 export default async function ApprovalsPage({ searchParams }: { searchParams: SP }) {
-  const { supabase, profile, org, leaveApproveIds } = await requireApprover()
+  const { supabase, profile, org } = await requireApprover()
   const sp = await searchParams
   const tab = one(sp.tab) === 'timesheets' ? 'timesheets' : 'leave'
 
-  const [leaveRes, sheetRes, entRes] = await Promise.all([
-    // Leave: ONLY requests from people who report directly to me. HR is not a leave approver.
-    leaveApproveIds.length
-      ? supabase.from('leave_requests').select('*, employee:profiles!user_id(full_name,position)').eq('status', 'pending').in('user_id', leaveApproveIds).order('start_date')
-      : Promise.resolve({ data: [] }),
-    // Timesheets: unchanged routing (line manager, HR for anyone) — one card per person-day.
-    supabase.from('daily_timesheets').select('*, employee:profiles!user_id(full_name,position)').eq('status', 'submitted').neq('user_id', profile.id).order('work_date').order('submitted_at'),
-    supabase.from('time_entries').select('*, project:projects(code,name)').eq('status', 'submitted').neq('user_id', profile.id).order('start_time'),
-  ])
-  const leave = (leaveRes.data ?? []) as Req[]
-  const sheets = (sheetRes.data ?? []) as Sheet[]
-  const entries = (entRes.data ?? []) as Ent[]
-  const entriesOf = (s: Sheet) => entries.filter((e) => e.user_id === s.user_id && e.work_date === s.work_date)
+  // Only what I can decide right now, oldest first. The database applies the routing rules.
+  const { rows, error } = await fetchApprovalRecords(supabase, { sort: 'submitted', dir: 'asc' }, { limit: QUEUE_LIMIT, actionable: true })
+  const leave = rows.filter((r) => r.kind === 'leave')
+  const sheets = rows.filter((r) => r.kind === 'timesheet')
+
+  // One query for all entries of the timesheets shown (no per-card queries).
+  let entries: Ent[] = []
+  if (tab === 'timesheets' && sheets.length) {
+    const users = [...new Set(sheets.map((s) => s.owner_id))]
+    const dates = [...new Set(sheets.map((s) => s.work_date as string))]
+    const { data } = await supabase
+      .from('time_entries')
+      .select('id, user_id, work_date, task, description, start_time, end_time, break_min, project:projects(code,name)')
+      .in('user_id', users)
+      .in('work_date', dates)
+      .order('start_time')
+    entries = (data ?? []) as unknown as Ent[]
+  }
+  const entriesOf = (r: ApprovalRecord) => entries.filter((e) => e.user_id === r.owner_id && e.work_date === r.work_date)
   const now = Date.now()
+
+  const sub =
+    profile.role === 'hr'
+      ? 'Requests from managers, project managers and leadership come to HR. Employees’ requests go to their own line manager.'
+      : profile.role === 'admin'
+        ? 'Requests from your direct reports, and older requests from people who have no active line manager.'
+        : 'Requests from the people who report to you. Your own requests are approved by HR.'
 
   return (
     <>
-      <PageHead
-        title="Approvals"
-        sub={
-          profile.role === 'hr'
-            ? 'Leave requests are approved by each employee’s line manager. As HR you can review any submitted timesheet.'
-            : profile.role === 'admin'
-              ? 'Leave from your direct reports and from anyone without an active line manager.'
-              : 'Requests from the people who report to you.'
-        }
-      />
+      <PageHead title="Approvals" sub={sub}>
+        <Link className="btn" href="/approvals/history"><Icon name="history" size={16} /> Approval history</Link>
+      </PageHead>
       <Flash ok={one(sp.ok)} error={one(sp.error)} />
+      {error && <Notice kind="bad">Approvals could not be loaded: {error}</Notice>}
 
-      <div className="tabs">
-        <Link href="/approvals" className={tab === 'leave' ? 'on' : ''}>Leave requests<span className="c">{leave.length}</span></Link>
-        <Link href="/approvals?tab=timesheets" className={tab === 'timesheets' ? 'on' : ''}>Timesheets<span className="c">{sheets.length}</span></Link>
-      </div>
+      <Tabs
+        current={tab}
+        items={[
+          { key: 'leave', label: 'Leave requests', href: '/approvals', count: leave.length },
+          { key: 'timesheets', label: 'Daily timesheets', href: '/approvals?tab=timesheets', count: sheets.length },
+        ]}
+      />
+      {rows.length >= QUEUE_LIMIT && <Notice kind="info">Showing the {QUEUE_LIMIT} oldest requests. Decide these first to see more.</Notice>}
 
       {tab === 'leave' &&
         (leave.length === 0 ? (
-          <div className="card"><Empty title="Nothing to approve">Leave requests from people who report to you will appear here.</Empty></div>
+          <section className="card"><Empty title="You're all caught up" icon="check">New leave requests that need your decision will appear here.</Empty></section>
         ) : (
-          leave.map((r) => (
-            <div className="card" key={r.id} style={{ marginBottom: 14 }}>
-              <div className="row between">
-                <div className="row">
-                  <Avatar name={r.employee?.full_name ?? '?'} />
-                  <div>
-                    <b>{r.employee?.full_name}</b>
-                    <div className="muted sm">{r.employee?.position}</div>
+          <div className="stack">
+            {leave.map((r) => (
+              <section className="card appr" key={r.request_id} aria-label={`Leave request from ${r.owner_name}`}>
+                <div className="appr-head">
+                  <Person name={r.owner_name} sub={[r.owner_position ?? ROLE_LABEL[r.owner_role], r.owner_department].filter(Boolean).join(' · ')} />
+                  <div className="row">
+                    <RouteTag r={r} />
+                    <Badge label="Pending" tone="amber" />
                   </div>
                 </div>
-                <Badge label="Pending" tone="amber" />
-              </div>
-              <dl className="kv" style={{ margin: '14px 0' }}>
-                <dt>Type</dt><dd>{LEAVE_LABEL[r.type]}</dd>
-                <dt>Dates</dt><dd>{fmtRange(r.start_date, r.end_date)}{r.half !== 'none' && ` (${r.half === 'AM' ? 'morning' : 'afternoon'})`}</dd>
-                <dt>Working days</dt><dd>{n1(r.days)}</dd>
-                <dt>Reason</dt><dd>{r.reason || <span className="muted">—</span>}</dd>
-                <dt>Requested</dt><dd>{fmtDateTime(r.created_at, org.timezone)}</dd>
-              </dl>
-              <form action={decideLeave}>
-                <input type="hidden" name="id" value={r.id} />
-                <div className="fld">
-                  <label htmlFor={`n-${r.id}`}>Note to the employee</label>
-                  <input id={`n-${r.id}`} name="note" className="note-input" maxLength={500} placeholder="Required when rejecting or requesting changes" />
-                </div>
-                <DecisionButtons label="The employee is notified straight away." />
-              </form>
-            </div>
-          ))
+                <KV
+                  items={[
+                    ['Leave type', r.leave_type ? LEAVE_LABEL[r.leave_type] : '—'],
+                    ['Dates', <>{fmtRange(r.start_date as string, r.end_date as string)}{r.half && r.half !== 'none' ? ` (${r.half === 'AM' ? 'morning' : 'afternoon'})` : ''}</>],
+                    ['Working days', n1(Number(r.days ?? 0))],
+                    ['Reason', r.reason || <span className="muted">—</span>],
+                    ['Submitted', r.last_submitted_at && r.last_submitted_at !== r.submitted_at
+                      ? <>{fmtDateTime(r.last_submitted_at, org.timezone)} <span className="muted xs">(resubmitted)</span></>
+                      : r.submitted_at ? fmtDateTime(r.submitted_at, org.timezone) : '—'],
+                  ]}
+                />
+                <form action={decideLeave} className="decide">
+                  <input type="hidden" name="id" value={r.request_id} />
+                  <DecisionControls uid={r.request_id} what="leave request" who={r.owner_name} />
+                </form>
+              </section>
+            ))}
+          </div>
         ))}
 
       {tab === 'timesheets' &&
         (sheets.length === 0 ? (
-          <div className="card"><Empty title="No timesheets waiting">Submitted daily timesheets will appear here.</Empty></div>
+          <section className="card"><Empty title="No timesheets waiting" icon="check">Submitted daily timesheets that need your review will appear here.</Empty></section>
         ) : (
-          sheets.map((g) => {
-            const list = entriesOf(g)
-            const total = list.reduce((s, e) => s + entryMinutes(e), 0)
-            const key = `${g.user_id}-${g.work_date}`
-            const stillEditable = !!g.edit_until && new Date(g.edit_until).getTime() > now
-            return (
-              <div className="card" key={key} style={{ marginBottom: 14 }}>
-                <div className="row between">
-                  <div className="row">
-                    <Avatar name={g.employee?.full_name ?? '?'} />
-                    <div>
-                      <b>{g.employee?.full_name ?? 'Unknown'}</b>
-                      <div className="muted sm">{fmtDateLong(g.work_date)}</div>
+          <div className="stack">
+            {sheets.map((r) => {
+              const list = entriesOf(r)
+              const total = list.reduce((s, e) => s + entryMinutes(e), 0)
+              const stillEditable = !!r.edit_until && new Date(r.edit_until).getTime() > now
+              return (
+                <section className="card appr" key={r.request_id} aria-label={`Timesheet from ${r.owner_name} for ${r.work_date}`}>
+                  <div className="appr-head">
+                    <Person name={r.owner_name} sub={fmtDateLong(r.work_date as string)} />
+                    <div className="row">
+                      <RouteTag r={r} />
+                      <span className="hours">{fmtMinutes(total)}</span>
+                      <Badge label={r.resubmissions > 0 ? 'Resubmitted' : 'Pending'} tone="amber" />
                     </div>
                   </div>
-                  <div className="row">
-                    <b>{fmtMinutes(total)}</b>
-                    <Badge label={g.resubmissions > 0 ? 'Resubmitted' : 'Submitted'} tone="amber" />
-                  </div>
-                </div>
-                <div className="muted sm" style={{ marginTop: 8 }}>
-                  Submitted {g.submitted_at ? fmtDateTime(g.submitted_at, org.timezone) : '—'}
-                  {g.resubmissions > 0 && g.last_submitted_at ? ` · resubmitted ${fmtDateTime(g.last_submitted_at, org.timezone)}` : ''}
-                  {stillEditable && g.edit_until ? ` · the employee can still edit until ${fmtTime(g.edit_until, org.timezone)} (your decision ends that)` : ''}
-                </div>
-                <details style={{ margin: '12px 0' }} open>
-                  <summary className="sm" style={{ cursor: 'pointer' }}>{list.length} entr{list.length === 1 ? 'y' : 'ies'}</summary>
-                  <div className="tw">
+                  <p className="muted sm">
+                    Submitted {r.submitted_at ? fmtDateTime(r.submitted_at, org.timezone) : '—'}
+                    {r.resubmissions > 0 && r.last_submitted_at ? ` · resubmitted ${fmtDateTime(r.last_submitted_at, org.timezone)}` : ''}
+                    {stillEditable && r.edit_until ? ` · the requester can still edit until ${fmtTime(r.edit_until, org.timezone)} (your decision ends that)` : ''}
+                  </p>
+                  <div className="tw bordered">
                     <table>
+                      <caption className="sr">Time entries</caption>
+                      <thead>
+                        <tr><th scope="col">Time</th><th scope="col">Project &amp; task</th><th scope="col" className="num">Break</th><th scope="col" className="num">Hours</th></tr>
+                      </thead>
                       <tbody>
                         {list.map((e) => (
                           <tr key={e.id}>
                             <td className="nowrap">{hhmm(e.start_time)}–{hhmm(e.end_time)}</td>
-                            <td><b>{e.project?.code}</b> {e.task}<div className="muted sm">{e.description}</div></td>
-                            <td className="num nowrap">{e.break_min} min break</td>
+                            <td><Tag>{e.project?.code}</Tag> <b>{e.task}</b><div className="muted sm">{e.description}</div></td>
+                            <td className="num nowrap">{e.break_min} min</td>
                             <td className="num">{fmtMinutes(entryMinutes(e))}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                </details>
-                <form action={decideTimesheet}>
-                  <input type="hidden" name="user" value={g.user_id} />
-                  <input type="hidden" name="date" value={g.work_date} />
-                  <div className="fld">
-                    <label htmlFor={`t-${key}`}>Note to the employee</label>
-                    <input id={`t-${key}`} name="note" className="note-input" maxLength={500} placeholder="Required when rejecting or requesting changes" />
-                  </div>
-                  <DecisionButtons label="Approving adds these hours to the project totals." />
-                </form>
-              </div>
-            )
-          })
+                  <form action={decideTimesheet} className="decide">
+                    <input type="hidden" name="user" value={r.owner_id} />
+                    <input type="hidden" name="date" value={r.work_date as string} />
+                    <DecisionControls uid={r.request_id} what="timesheet" who={r.owner_name} />
+                  </form>
+                </section>
+              )
+            })}
+          </div>
         ))}
     </>
   )

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useActionState, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Field, Notice } from '@/components/ui'
+import type { ApproverInfo } from '@/lib/routing'
 import { LEAVE_LABEL, type LeaveType } from '@/lib/types'
 import { REASON_MAX, hasErrors, initialFormState, readLeave, validateLeave, type FieldErrors } from '@/lib/validation'
 import { saveLeave } from './actions'
@@ -23,18 +24,18 @@ export interface LeaveFormValues {
 export default function LeaveForm({
   today,
   req,
-  managerName,
+  approver,
 }: {
   today: string
   req?: LeaveFormValues
-  /** Active line manager; null = the request goes to an administrator. */
-  managerName: string | null
+  /** Where the request goes (line manager or HR), and whether submitting is possible. */
+  approver: Pick<ApproverInfo, 'sentence' | 'blocked'>
 }) {
   const [state, action, pending] = useActionState(saveLeave, initialFormState)
   const v = state.values ?? req ?? { type: '', start_date: '', end_date: '', half: 'none', reason: '' }
   return (
     // remount with the submitted values after a server-side error
-    <Inner key={state.attempt} today={today} id={req?.id} v={v} serverErrors={state.errors} message={state.message} action={action} pending={pending} managerName={managerName} />
+    <Inner key={state.attempt} today={today} id={req?.id} v={v} serverErrors={state.errors} message={state.message} action={action} pending={pending} approver={approver} />
   )
 }
 
@@ -46,7 +47,7 @@ function Inner({
   message,
   action,
   pending,
-  managerName,
+  approver,
 }: {
   today: string
   id?: string
@@ -55,7 +56,7 @@ function Inner({
   message?: string
   action: (fd: FormData) => void
   pending: boolean
-  managerName: string | null
+  approver: Pick<ApproverInfo, 'sentence' | 'blocked'>
 }) {
   const [start, setStart] = useState(v.start_date ?? '')
   const [end, setEnd] = useState(v.end_date ?? '')
@@ -141,11 +142,11 @@ function Inner({
         <textarea id={`lr-${uid}`} name="reason" defaultValue={v.reason} maxLength={REASON_MAX} required aria-invalid={Boolean(errors.reason)} />
       </Field>
       <p className="hint-line" style={{ marginBottom: 10 }}>
-        Weekends and company holidays are not counted. Your balance and overlapping requests are checked when you submit.
-        {managerName ? <> Your request goes to <b>{managerName}</b>, your line manager, for approval.</> : <> Your request goes to an administrator for approval.</>}
+        Weekends and company holidays are not counted. Your balance and overlapping requests are checked when you submit. {approver.blocked ? null : approver.sentence}
       </p>
+      {approver.blocked && <Notice kind="warn" title="You cannot submit leave yet">{approver.sentence} You can save a draft meanwhile.</Notice>}
       <div className="row">
-        <button className="btn primary" type="submit" name="intent" value="pending" disabled={pending}>
+        <button className="btn primary" type="submit" name="intent" value="pending" disabled={pending || approver.blocked}>
           {pending ? 'Sending…' : id ? 'Resubmit for approval' : 'Submit request'}
         </button>
         <button className="btn" type="submit" name="intent" value="draft" disabled={pending}>Save as draft</button>

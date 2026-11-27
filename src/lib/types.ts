@@ -2,6 +2,11 @@ export type AppRole = 'employee' | 'manager' | 'pm' | 'hr' | 'leadership' | 'adm
 export type LeaveType = 'annual' | 'sick' | 'casual' | 'unpaid' | 'compassionate'
 export type LeaveStatus = 'draft' | 'pending' | 'approved' | 'rejected' | 'changes' | 'cancelled'
 export type EntryStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'changes'
+/** Who receives a request: the requester's line manager, or HR (migration 0005). */
+export type ApprovalRoute = 'manager' | 'hr'
+/** Status as shown in approval lists (timesheet "submitted" is shown as "pending"). */
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'changes' | 'cancelled'
+export type Tone = 'gray' | 'blue' | 'green' | 'amber' | 'red'
 
 export interface Profile {
   id: string
@@ -69,6 +74,7 @@ export interface DailyTimesheet {
   reviewed_by: string | null
   reviewed_at: string | null
   review_note: string | null
+  approval_route: ApprovalRoute | null
   created_at: string
 }
 
@@ -88,6 +94,9 @@ export interface LeaveRequest {
   decided_by: string | null
   decided_at: string | null
   decision_note: string | null
+  approval_route: ApprovalRoute | null
+  submitted_at: string | null
+  last_submitted_at: string | null
   created_at: string
 }
 
@@ -116,7 +125,7 @@ export const LEAVE_LABEL: Record<LeaveType, string> = {
   compassionate: 'Compassionate leave',
 }
 
-export const LEAVE_STATUS_LABEL: Record<LeaveStatus, [string, string]> = {
+export const LEAVE_STATUS_LABEL: Record<LeaveStatus, [string, Tone]> = {
   draft: ['Draft', 'gray'],
   pending: ['Pending approval', 'amber'],
   approved: ['Approved', 'green'],
@@ -125,10 +134,68 @@ export const LEAVE_STATUS_LABEL: Record<LeaveStatus, [string, string]> = {
   cancelled: ['Cancelled', 'gray'],
 }
 
-export const ENTRY_STATUS_LABEL: Record<EntryStatus, [string, string]> = {
+export const ENTRY_STATUS_LABEL: Record<EntryStatus, [string, Tone]> = {
   draft: ['Draft', 'gray'],
-  submitted: ['Submitted', 'amber'],
+  submitted: ['Pending approval', 'amber'],
   approved: ['Approved', 'green'],
   rejected: ['Rejected', 'red'],
   changes: ['Changes requested', 'blue'],
+}
+
+export const APPROVAL_STATUS_LABEL: Record<ApprovalStatus, [string, Tone]> = {
+  pending: ['Pending', 'amber'],
+  approved: ['Approved', 'green'],
+  rejected: ['Rejected', 'red'],
+  changes: ['Changes requested', 'blue'],
+  cancelled: ['Cancelled', 'gray'],
+}
+
+export const ROUTE_LABEL: Record<ApprovalRoute, string> = { manager: 'Line manager', hr: 'HR' }
+
+/** Mirrors public._approval_route() in migration 0005. Display only — the database decides. */
+export const routeForRole = (role: AppRole): ApprovalRoute => (role === 'manager' || role === 'pm' || role === 'leadership' ? 'hr' : 'manager')
+
+/** One row of public.approval_records() (migration 0005). */
+export interface ApprovalRecord {
+  kind: 'leave' | 'timesheet'
+  request_id: string
+  owner_id: string
+  owner_name: string
+  owner_department: string | null
+  owner_position: string | null
+  owner_role: AppRole
+  route: ApprovalRoute
+  status: ApprovalStatus
+  raw_status: string
+  submitted_at: string | null
+  last_submitted_at: string | null
+  decided_at: string | null
+  approver_id: string | null
+  approver_name: string | null
+  decision_note: string | null
+  leave_type: LeaveType | null
+  start_date: string | null
+  end_date: string | null
+  days: number | null
+  half: 'none' | 'AM' | 'PM' | null
+  reason: string | null
+  work_date: string | null
+  edit_until: string | null
+  resubmissions: number
+  total_minutes: number | null
+  entry_count: number
+  projects: string | null
+  can_decide: boolean
+  total_count: number
+}
+
+export interface ProjectMember {
+  id: string
+  project_id: string
+  employee_id: string
+  assigned_by: string | null
+  assigned_at: string
+  unassigned_by: string | null
+  unassigned_at: string | null
+  active: boolean
 }

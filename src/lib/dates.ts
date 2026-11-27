@@ -58,3 +58,6 @@ export const fmtMinutes = (m: number) => {
   return mm ? `${h}h ${mm}m` : `${h}h`
 }
 export const n1 = (v: number) => String(Math.round(v * 10) / 10)
+/** Calendar date of a timestamp in the company time zone, e.g. "24 Nov 2026". */
+export const fmtDay = (iso: string, tz: string) =>
+  new Date(iso).toLocaleDateString('en-GB', { timeZone: tz, day: 'numeric', month: 'short', year: 'numeric' })

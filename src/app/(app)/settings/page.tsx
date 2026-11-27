@@ -2,6 +2,8 @@ import { requireRole } from '@/lib/auth'
 import { Empty, Field, Flash, PageHead, one, type SP } from '@/components/ui'
 import { fmtDateY } from '@/lib/dates'
 import { LEAVE_LABEL, type LeaveType } from '@/lib/types'
+import ConfirmButton from '@/components/ConfirmButton'
+import SubmitButton from '@/components/SubmitButton'
 import { addHoliday, deleteHoliday, saveOrg, savePolicies } from './actions'
 
 export const metadata = { title: 'Policies & Holidays' }
@@ -33,7 +35,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
               <Field label="Note"><input name={`note_${t}`} defaultValue={policies.get(t)?.note ?? ''} maxLength={300} /></Field>
             </div>
           ))}
-          <button className="btn primary" type="submit">Save policies</button>
+          <SubmitButton pendingLabel="Saving…">Save policies</SubmitButton>
           <p className="hint-line" style={{ marginTop: 8 }}>Balances are counted per calendar year, by the first day of each request.</p>
         </form>
 
@@ -42,7 +44,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
           <form action={addHoliday} className="inline-form" style={{ marginBottom: 12 }}>
             <Field label="Date"><input type="date" name="holiday_date" required /></Field>
             <Field label="Name"><input name="name" maxLength={120} required placeholder="e.g. National Day" /></Field>
-            <div className="fld"><button className="btn primary" type="submit">Add</button></div>
+            <div className="fld"><SubmitButton pendingLabel="Adding…">Add</SubmitButton></div>
           </form>
           {holidays.length === 0 ? (
             <Empty title="No holidays yet">Holidays are not counted as leave days.</Empty>
@@ -51,7 +53,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
               {holidays.map((h) => (
                 <div className="li" key={h.id}>
                   <div className="grow"><div className="t">{h.name}</div><div className="muted sm">{fmtDateY(h.holiday_date)}</div></div>
-                  <form action={deleteHoliday}><input type="hidden" name="id" value={h.id} /><button className="btn s danger" type="submit">Remove</button></form>
+                  <form action={deleteHoliday}><input type="hidden" name="id" value={h.id} /><ConfirmButton className="btn s danger" confirmClassName="btn danger-solid" title={`Remove ${h.name}?`} message={<p>Leave requests submitted from now on will count {h.holiday_date} as a working day. Existing requests are not recalculated.</p>} confirmLabel="Remove holiday">Remove</ConfirmButton></form>
                 </div>
               ))}
             </div>
@@ -68,7 +70,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
             <Field label="Time zone" hint="e.g. Asia/Colombo, Europe/London"><input name="timezone" defaultValue={org.timezone} required /></Field>
             <Field label="Only allow sign-ups from this email domain" hint="e.g. mycompany.com — leave empty to allow any"><input name="allowed_email_domain" defaultValue={org.allowed_email_domain ?? ''} /></Field>
           </div>
-          <button className="btn primary" type="submit">Save organisation</button>
+          <SubmitButton pendingLabel="Saving…">Save organisation</SubmitButton>
         </form>
       )}
     </>

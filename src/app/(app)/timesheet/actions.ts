@@ -49,9 +49,19 @@ export async function saveEntry(prev: FormState, formData: FormData): Promise<Fo
   const { data: editable, error: editErr } = await supabase.rpc('timesheet_day_editable', { p_user: profile.id, p_date: workDate })
   if (editErr) return failed(prev, values, friendly(editErr.message))
   if (!editable)
-    return failed(prev, values, 'This timesheet can no longer be edited: the 30-minute editing period has ended or your manager has already reviewed it.')
+    return failed(prev, values, 'This timesheet can no longer be edited: the 30-minute editing period has ended or it has already been reviewed.')
 
-  const { data: sameDay } = await supabase.from('time_entries').select('id, start_time, end_time').eq('user_id', profile.id).eq('work_date', workDate)
+  // Project access is checked on the server (never trust the project id from the browser).
+  // Keeping an entry's existing project is always allowed, so history stays editable after unassignment.
+  const [{ data: sameDay }, { data: allowed }, { data: current }] = await Promise.all([
+    supabase.from('time_entries').select('id, start_time, end_time').eq('user_id', profile.id).eq('work_date', workDate),
+    supabase.rpc('my_loggable_projects'),
+    id ? supabase.from('time_entries').select('project_id').eq('id', id).eq('user_id', profile.id).maybeSingle() : Promise.resolve({ data: null }),
+  ])
+  const keepsProject = (current as { project_id: string } | null)?.project_id === input.project_id
+  if (input.project_id && !keepsProject && !((allowed ?? []) as { id: string }[]).some((p) => p.id === input.project_id)) {
+    return failed(prev, values, 'Please fix the highlighted fields.', { project_id: 'You are not assigned to this project. Ask the project manager to add you to the team.' })
+  }
   const others = ((sameDay ?? []) as { id: string; start_time: string; end_time: string }[]).filter((e) => e.id !== id)
   const { errors, breakMin } = validateTimeEntry(input, others)
   if (hasErrors(errors)) return failed(prev, values, 'Please fix the highlighted fields.', errors)
@@ -102,5 +112,5 @@ export async function submitDay(formData: FormData) {
   const { data, error } = await supabase.rpc('submit_timesheet_day', { p_date: date && date !== today ? date : null })
   if (error) back(path, 'error', error.message)
   revalidatePath('/', 'layout')
-  back(path, 'ok', `Timesheet submitted (${data} entr${data === 1 ? 'y' : 'ies'}). Your manager has been notified. You can still edit it for 30 minutes.`)
+  back(path, 'ok', `Timesheet submitted (${data} entr${data === 1 ? 'y' : 'ies'}). Your approver has been notified. You can still edit it for 30 minutes.`)
 }
